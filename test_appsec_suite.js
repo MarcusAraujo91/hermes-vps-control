@@ -67,6 +67,31 @@ async function runFullAppSecSuite() {
   const unpackedPlain = unpackEncryptedOrPlain(plainObj, secret);
   assert.deepStrictEqual(unpackedPlain, plainObj, "Fallback de dados não cifrados deve ser preservado");
 
+  // PILAR 4: fail-closed da chave mestra client-side (regressão B1 e B6).
+  const prevEnvKey = process.env.APP_MASTER_KEY;
+  const prevEnvPwd = process.env.SITE_PASSWORD;
+  delete process.env.APP_MASTER_KEY;
+  delete process.env.SITE_PASSWORD;
+  await assert.rejects(async () => await encryptPayloadClient({ a: 1 }), /Master key not configured/);
+  await assert.rejects(async () => await encryptPayloadClient({ a: 1 }, ""), /Weak master key/);
+  await assert.rejects(async () => await encryptPayloadClient({ a: 1 }, "short"), /Weak master key/);
+  await assert.rejects(async () => await encryptPayloadClient({ a: 1 }, 12345), /TypeError/);
+
+  // PILAR 4: paridade estrita do piso de 16 chars e tipos entre servidor e cliente.
+  assert.throws(() => encryptPayload({ a: 1 }, ""), /Weak master key/);
+  assert.throws(() => encryptPayload({ a: 1 }, "short"), /Weak master key/);
+  assert.throws(() => encryptPayload({ a: 1 }, "0123456789abcde"), /Weak master key/);
+  assert.throws(() => encryptPayload({ a: 1 }, 12345), /TypeError/);
+  assert.throws(() => issueSignedToken({ a: 1 }, 1000, "short"), /Weak master key/);
+
+  if (prevEnvKey !== undefined) process.env.APP_MASTER_KEY = prevEnvKey;
+  if (prevEnvPwd !== undefined) process.env.SITE_PASSWORD = prevEnvPwd;
+
+  // Rejeição explícita de hex malformado (paridade com isWellFormedPacket).
+  await assert.rejects(async () => await decryptPayloadClient("z".repeat(60), secret));
+  await assert.rejects(async () => await decryptPayloadClient(sHex.slice(0, 55), secret));
+  console.log("  ✓ Fail-closed de chave mestra e validação de hex client-side validados!\n");
+
   console.log("  ✓ Paridade 100% nativa, integridade de 1-bit e unpackEncryptedOrPlain validados!\n");
 
   // -----------------------------------------------------------------

@@ -1,0 +1,10 @@
+{
+  "name": "resilient-tesla",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hermes VPS Control & Security Dashboard",
+  "scripts": {
+    "test": "node test_suite_e2ee.js && node test_appsec_suite.js",
+    "check": "node --check app.js crypto-web.js crypto.server.js anti-inspect.js test_suite_e2ee.js test_appsec_suite.js"
+  }
+}

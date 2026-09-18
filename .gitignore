@@ -41,3 +41,5 @@ Thumbs.db
 .idea/
 .gemini/
 scratch/
+*.bak
+*.bak-*

@@ -87,6 +87,10 @@ function initAntiInspect(doc = typeof document !== "undefined" ? document : null
   };
 }
 
+if (typeof globalThis !== "undefined") {
+  globalThis.initAntiInspect = initAntiInspect;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = { initAntiInspect };
 }

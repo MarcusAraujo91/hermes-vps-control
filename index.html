@@ -66,6 +66,26 @@
 </main>
 
 <div id="toasts"></div>
+<!-- Contrato de injeção: o servidor substitui __INJECTED_AT_RUNTIME__ por uma chave
+     JSON-escapada (aspas, barras e "</" escapados como "<\/"). Sem substituição: fail-closed. -->
+<script id="app-config" type="application/json">{"masterKey":"__INJECTED_AT_RUNTIME__"}</script>
+<script>
+  (function () {
+    var sentinel = "INJECTED_AT" + "_RUNTIME";
+    try {
+      var el = document.getElementById("app-config");
+      var cfg = JSON.parse(el.textContent);
+      var injected = cfg && cfg.masterKey;
+      if (typeof injected === "string" && injected.indexOf(sentinel) === -1 && injected.length >= 16) {
+        globalThis.__APP_MASTER_KEY__ = injected;
+      }
+    } catch (e) {
+      /* fail-closed: chave permanece indefinida */
+    }
+  })();
+</script>
+<script src="crypto-web.js"></script>
+<script src="anti-inspect.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -65,4 +65,5 @@ pre {
   background: #161b22; border: 1px solid #30363d; border-left: 4px solid #3fb950;
   padding: 10px 14px; border-radius: 6px; max-width: 340px; font-size: 13px;
 }
-.toast.err { border-left-color: #f85149; }
+.toast.err, .toast.error { border-left-color: #f85149; }
+.toast.success { border-left-color: #3fb950; }

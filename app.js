@@ -3,45 +3,36 @@
  * Zero-Plaintext E2EE, Smart Polling (Page Visibility API) & Resilient API Client.
  */
 
-const MASTER_KEY = "hermes-default-zero-plaintext-master-key-2026";
+// PILAR 2/4: motor criptográfico único (crypto-web.js). Zero reimplementação local.
+const CryptoWeb = globalThis.HermesCryptoWeb;
+if (!CryptoWeb && typeof window !== "undefined") {
+  console.warn("crypto-web.js must be loaded before app.js");
+}
+
 const API_BASE = "https://hermes.tvaraujo.com";
+let pollTimer = null;
+let masterKeyWarned = false;
+const POLL_INTERVAL = 10000; // 10s
 
-// --- Web Crypto E2EE Engine (Native Subtle API) ---
-function bufToHex(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, "0");
+function isMasterKeyConfigured() {
+  try {
+    if (!CryptoWeb) return false;
+    CryptoWeb.resolveClientMasterKey();
+    return true;
+  } catch {
+    return false;
   }
-  return hex;
 }
 
-async function deriveClientKey(secret) {
-  const enc = new TextEncoder();
-  const rawHash = await crypto.subtle.digest("SHA-256", enc.encode(secret));
-  return await crypto.subtle.importKey(
-    "raw",
-    rawHash,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
 }
 
-async function encryptZeroPlaintext(data, secret = MASTER_KEY) {
-  const plaintext = typeof data === "string" ? data : JSON.stringify(data);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveClientKey(secret);
-  const enc = new TextEncoder();
-  const encryptedBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, tagLength: 128 },
-    key,
-    enc.encode(plaintext)
-  );
-  const totalLen = encryptedBuffer.byteLength;
-  const cipherBytes = new Uint8Array(encryptedBuffer, 0, totalLen - 16);
-  const tagBytes = new Uint8Array(encryptedBuffer, totalLen - 16, 16);
-  return bufToHex(iv) + bufToHex(tagBytes) + bufToHex(cipherBytes);
+async function encryptZeroPlaintext(data, secret) {
+  if (!CryptoWeb) throw new Error("Crypto engine not loaded");
+  return CryptoWeb.encryptPayloadClient(data, secret);
 }
 
 // --- UI Helpers ---
@@ -60,9 +51,36 @@ function updateElement(id, text) {
   if (el) el.textContent = text;
 }
 
+function stopSmartPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startSmartPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (!isMasterKeyConfigured()) {
+    updateElement("lastRefresh", "Chave mestra ausente — painel bloqueado");
+    if (!masterKeyWarned) {
+      toast("Chave mestra não injetada pelo servidor. Operações bloqueadas.", true);
+      masterKeyWarned = true;
+    }
+    return;
+  }
+  masterKeyWarned = false;
+  refreshDashboard();
+  pollTimer = setInterval(refreshDashboard, POLL_INTERVAL);
+}
+
 // --- API Client with E2EE Envelope ---
 async function secureApiCall(op, payload = {}) {
   const fullPayload = { op, ...payload };
+  if (!isMasterKeyConfigured()) {
+    stopSmartPolling();
+    return null;
+  }
+
   try {
     const hex = await encryptZeroPlaintext(fullPayload);
     const res = await fetch(`${API_BASE}/api/vpsProxy`, {
@@ -109,8 +127,8 @@ async function refreshDashboard() {
         servicesEl.innerHTML = Object.entries(statusData.services)
           .map(([k, v]) => `
             <div class="card">
-              <div class="card-title">${k}</div>
-              <div class="detail ${v === 'active' || v === 'running' ? 'ok' : 'err'}">${v}</div>
+              <div class="card-title">${escapeHtml(k)}</div>
+              <div class="detail ${v === 'active' || v === 'running' ? 'ok' : 'err'}">${escapeHtml(v)}</div>
             </div>
           `).join("");
       }
@@ -125,9 +143,9 @@ async function refreshDashboard() {
         intEl.innerHTML = Object.entries(integrationsData.integrations)
           .map(([k, v]) => `
             <div class="card">
-              <div class="card-title">${k}</div>
-              <div class="detail ${v.status === 'connected' || v.status === 'ok' ? 'ok' : 'err'}">
-                ${v.status || 'offline'}
+              <div class="card-title">${escapeHtml(k)}</div>
+              <div class="detail ${v?.status === 'connected' || v?.status === 'ok' ? 'ok' : 'err'}">
+                ${escapeHtml(v?.status || 'offline')}
               </div>
             </div>
           `).join("");
@@ -135,7 +153,7 @@ async function refreshDashboard() {
     }
 
     if (cronsData) {
-      if (cronsData.crons) {
+      if (Array.isArray(cronsData.crons)) {
         updateElement("cronCount", cronsData.crons.length);
         const listEl = document.getElementById("cronList");
         if (listEl) listEl.textContent = JSON.stringify(cronsData.crons, null, 2);
@@ -147,78 +165,67 @@ async function refreshDashboard() {
   }
 }
 
-// --- Smart Polling Controller (Page Visibility API) ---
-let pollTimer = null;
-const POLL_INTERVAL = 10000; // 10s
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopSmartPolling();
+    } else {
+      startSmartPolling();
+    }
+  });
 
-function startSmartPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  refreshDashboard();
-  pollTimer = setInterval(refreshDashboard, POLL_INTERVAL);
-}
+  // --- Event Listeners ---
+  window.addEventListener("DOMContentLoaded", () => {
+    if (typeof globalThis.initAntiInspect === "function") {
+      globalThis.initAntiInspect();
+    }
 
-function stopSmartPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    stopSmartPolling();
-  } else {
     startSmartPolling();
-  }
-});
 
-// --- Event Listeners ---
-window.addEventListener("DOMContentLoaded", () => {
-  startSmartPolling();
+    document.getElementById("btnRefresh")?.addEventListener("click", refreshDashboard);
 
-  document.getElementById("btnRefresh")?.addEventListener("click", refreshDashboard);
-
-  document.getElementById("btnQr")?.addEventListener("click", async () => {
-    const res = await secureApiCall("whatsapp_qr");
-    const qrBox = document.getElementById("qrBox");
-    if (qrBox && res) {
-      if (res.qr_png_base64) {
-        qrBox.innerHTML = `<img src="data:image/png;base64,${res.qr_png_base64}" alt="QR Code WhatsApp" style="max-width:200px;border-radius:8px;"/>`;
-      } else if (res.qr_ascii) {
-        qrBox.innerHTML = `<pre style="font-size:8px;line-height:8px;">${res.qr_ascii}</pre>`;
-      } else {
-        qrBox.textContent = res.detail || "WhatsApp já conectado!";
+    document.getElementById("btnQr")?.addEventListener("click", async () => {
+      const res = await secureApiCall("whatsapp_qr");
+      const qrBox = document.getElementById("qrBox");
+      if (qrBox && res) {
+        if (typeof res.qr_png_base64 === "string" && res.qr_png_base64.length <= 200000 && /^[A-Za-z0-9+/=]+$/.test(res.qr_png_base64)) {
+          qrBox.innerHTML = `<img src="data:image/png;base64,${res.qr_png_base64}" alt="QR Code WhatsApp" style="max-width:200px;border-radius:8px;"/>`;
+        } else if (res.qr_ascii) {
+          qrBox.innerHTML = `<pre style="font-size:8px;line-height:8px;">${escapeHtml(res.qr_ascii)}</pre>`;
+        } else {
+          qrBox.textContent = res.detail || "WhatsApp já conectado!";
+        }
       }
-    }
-  });
+    });
 
-  document.getElementById("btnWaReset")?.addEventListener("click", async () => {
-    if (confirm("Deseja resetar a sessão do WhatsApp?")) {
-      const res = await secureApiCall("whatsapp_reset");
-      toast(res?.ok ? "WhatsApp resetado com sucesso!" : "Falha ao resetar WhatsApp", !res?.ok);
-      refreshDashboard();
-    }
-  });
+    document.getElementById("btnWaReset")?.addEventListener("click", async () => {
+      if (confirm("Deseja resetar a sessão do WhatsApp?")) {
+        const res = await secureApiCall("whatsapp_reset");
+        toast(res?.ok ? "WhatsApp resetado com sucesso!" : "Falha ao resetar WhatsApp", !res?.ok);
+        refreshDashboard();
+      }
+    });
 
-  document.getElementById("btnRestart")?.addEventListener("click", async () => {
-    if (confirm("Reiniciar o gateway VPS?")) {
-      const res = await secureApiCall("restart_gateway");
-      toast(res?.ok ? "Gateway reiniciado!" : "Falha ao reiniciar gateway", !res?.ok);
-      refreshDashboard();
-    }
-  });
+    document.getElementById("btnRestart")?.addEventListener("click", async () => {
+      if (confirm("Reiniciar o gateway VPS?")) {
+        const res = await secureApiCall("restart_gateway");
+        toast(res?.ok ? "Gateway reiniciado!" : "Falha ao reiniciar gateway", !res?.ok);
+        refreshDashboard();
+      }
+    });
 
-  document.getElementById("btnRunCron")?.addEventListener("click", async () => {
-    const script = document.getElementById("cronScript")?.value?.trim();
-    if (!script) return toast("Informe o nome do script cron", true);
-    const res = await secureApiCall("run_cron", { script });
-    toast(res?.ok ? `Cron '${script}' disparado!` : `Erro ao rodar cron: ${res?.detail}`, !res?.ok);
-  });
+    document.getElementById("btnRunCron")?.addEventListener("click", async () => {
+      const script = document.getElementById("cronScript")?.value?.trim();
+      if (!script) return toast("Informe o nome do script cron", true);
+      const res = await secureApiCall("run_cron", { script });
+      toast(res?.ok ? `Cron '${script}' disparado!` : `Erro ao rodar cron: ${res?.detail}`, !res?.ok);
+    });
 
-  document.getElementById("btnPauseCron")?.addEventListener("click", async () => {
-    const pattern = document.getElementById("cronPattern")?.value?.trim();
-    if (!pattern) return toast("Informe o pattern do cron", true);
-    const res = await secureApiCall("cron_pause", { pattern });
-    toast(res?.ok ? `Cron '${pattern}' pausado!` : `Erro: ${res?.detail}`, !res?.ok);
+    document.getElementById("btnPauseCron")?.addEventListener("click", async () => {
+      const pattern = document.getElementById("cronPattern")?.value?.trim();
+      if (!pattern) return toast("Informe o pattern do cron", true);
+      const res = await secureApiCall("cron_pause", { pattern });
+      toast(res?.ok ? `Cron '${pattern}' pausado!` : `Erro: ${res?.detail}`, !res?.ok);
+    });
   });
-});
+}
