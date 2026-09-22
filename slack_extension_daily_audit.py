@@ -185,6 +185,7 @@ def main():
     # Despachar para o Slack
     try:
         sys.path.append(r"C:\Users\marcu\AppData\Local\hermes\scripts")
+        sys.path.append(r"C:\Users\marcu\projetos\hermes-vps-control")
         sys.path.append(r"c:\Users\marcu\Documents\antigravity\resilient-tesla")
         from slack_report_notifier import send_from_obsidian_markdown
         send_from_obsidian_markdown(str(report_path))

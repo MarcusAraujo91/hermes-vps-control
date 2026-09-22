@@ -314,7 +314,7 @@ def parse_obsidian_audit_markdown(file_path: str) -> Dict[str, Any]:
 
     # Normalização dos nomes de projetos
     p_lower = project_name.lower()
-    if "resilient-tesla" in p_lower or "hermes vps" in p_lower:
+    if "resilient-tesla" in p_lower or "hermes vps" in p_lower or "hermes-vps-control" in p_lower:
         project_name = "Hermes VPS Control"
     elif "creative-loop-genius" in p_lower or "araujo make" in p_lower:
         project_name = "Araujo Make"
